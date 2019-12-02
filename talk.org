@@ -1,0 +1,611 @@
+* Title
+
+"If The Data Will Not Come to the Astronomer...": JupyterLab and a sea
+change in astronomical analysis.
+
+* Description
+
+LSST is an ambitious project to map the sky in the the fastest, widest
+and deepest survey ever made. This petabyte-scale, 7 trillion-row
+database disrupts traditional astronomical workflows. Our science
+platform requires a sea change in how astronomy is done. Learn the
+challenges of providing production services on a notebook-based
+architecture and the compelling advantages of JupyterLab.
+
+* Abstract
+
+The talk will cover:
+
+- A brief overview of the mission of the Large Synoptic Survey
+ Telescope (LSST) and the scale and scope of the data it will
+ collect.
+
+- The way that data analysis has typically been done in the
+ astronomical community, and show that the traditional methods will
+ not suffice to enable researchers to efficiently analyze the
+ enormous quantities of data that will be produced.
+
+- How adopting a new model, based on the combination of JupyterLab,
+ JupyterHub, and Kubernetes, allows a path forward for rapid
+ exploration of the data and publication-quality science analysis
+
+- A description of our architectural choices including the critical
+ role of JupyterLab in enabling the necessary features of this
+ platform
+
+- Our very positive experience as early JupyterLab adopters and
+ occasional contributors.
+
+* Outline
+** LSST: Basic overview
+*** [[https://www.ted.com/talks/andrew_connolly_what_s_the_next_window_into_our_universe][Andy Connolly Ted Talk]] and [[https://arxiv.org/pdf/0805.2366.pdf][LSST Overview Paper]] and [[https://confluence.lsstcorp.org/display/LKB/LSST+Key+Numbers][LSST Key Numbers]]
+
+The Large Synoptic Survey Telescope is funded by the National Science
+Foundation and the Department of Energy, as well as a host of other
+donors, public and private.
+
+LSST will perform a ten-year survey of the Southern sky: whole sky every
+three nights.
+
+Single-visit detection to 24.7 magnitude, 10-year-stacked to 27.5 (red
+band).  That's very faint.  How faint?
+
+*** Depth:
+**** Every 5 magnitudes is a factor of 100 in brightness
+
+Astronomy, being a science that existed before the Scientific
+Revolution, has a truly astonishing amount of tech debt in its
+nomenclature.
+
+Magnitude as a concept dates back to Hipparchus, between
+c. 129 BCE.  Numerical magnitude dates to Ptolemy (c. 140 CE).  The
+fifth root of 100 as a precise quantification dates to 1856 and Norman
+R. Pogson.
+
+**** Your eyes: 6 magnitude.  Mmmmmaybe 8 under ideal conditions
+
+Ptolemy's faintest stars are "of the sixth magnitude."
+
+**** A good amateur scope: 14ish magnitude (eyes), around 20 with CCDs
+**** LSST depth:
+***** Saturates at 16 magnitude
+***** Single-visit (red) 24.7 magnitude
+***** 10-year stacked depth (red) 27.5 magnitude
+**** HST: 31.  JWST: expected to be able to see 34 magnitude
+
+Depth isn't everything:
+
+*** Humongous field of view: 9.62 degrees^2
+
+That's the area of 40 full moons; roughly a CD held at arm's length.
+JWST, by contrast, is 9.7 arcmin^2, so 
+roughly 1/3600.  
+
+*** Focal plane array: 3.2 Gpixels (189 4K x 4K sensors), 18 bits per pixel
+
+Each exposure 15 seconds, two exposures per visit (to do
+cosmic-ray/atmospheric transient rejection).
+
+*** On the order of 20 TB a night
+*** Half an exabyte in the final image collection by operational EOL (DR11)
+
+Largest non-proprietary data set, period.
+
+**** Over one trillion photometric measures of celestial sources
+**** 10-40 million AGNs (quasars)
+**** 300,000 supernovae a year
+**** Roughly 20 billion galaxies
+**** Roughly 20 billion stars
+*** Dark Energy, TNOs, NEOs
+
+We're currently running at about 7,000 supernovae per year detected.
+That's a fortyfold increase from current detection capabilities, from a
+single instrument.
+
+** Astronomical Research Status Quo
+
+Astronomy has traditionally done a few things that are common across
+science and quite probably analytic endeavours generally: 
+
+*** Laptop
+*** Software
+*** Download the data
+*** This has a few obvious failure modes:
+**** Laptops break, get stolen, age out, or just aren't big enough
+
+In general, this is the promise of shared-computational facilities,
+right?  You can rent excess capacity when you need it, and that's
+cheaper than provisioning your own dedicated resources.  It's managed by
+professionals, who have all the advantages of economies of scale in both
+procurement and operation that you, your laptop, and the RAID NAS device
+humming away under your desk do not.  And since they have been working
+in cloud provider environments, and you are a scientist who is only
+doing system administration by necessity, they probably are much better
+at administering infrastructure than you are.
+
+**** In-house analysis stacks can be extremely complex and difficult to install
+
+Installing the LSST stack takes hours for experienced users, and
+literally weeks (and time sucked away from experienced users) for
+newbies.  Small confession: I have been at LSST almost two years.  I
+have *never* successfully installed a working stack from sources from
+scratch (I am, however, a software developer with a system
+administration background, not an astronomer).  The best I've ever
+managed is a binary install with local source mods to override
+components.
+
+**** When the whole data set is half an exabyte, you ain't gonna download it.
+
+If our input is 40Gbps every night each night for 10 years...how long is
+it going to take you to suck it back out of the data center?
+
+"Big Data is data you can't pick up."  Will this still be true for half
+an exabyte in 2032?  I wouldn't bet _against_ it.  Although it's not
+necessarily as obvious as it seems.
+
+*** Data access has traditionally been key.
+
+A researcher's advantage has traditionally been in collecting data, and
+then in protecting access to that data.
+Perhaps a few dozen collaborators, at the same institution or small set
+of institutions.
+
+**** This doesn't work for LSST
+***** There will be thousands of researchers with access to the raw data.
+
+The competitive advantage is much less in access to the data than to its
+analysis.  That's not _quite_ true, which is why there is a complicated
+Data Rights structure, and why really-public access to the data will be
+delayed a couple years--that should give the people who will get the
+Nobel for cosmological discoveries, or the ones to find the killer
+asteroid, enough of a head start to get their plaudits.  Is that really
+the case?  It doesn't matter.  What matters is that astronomers believe
+it to be the case.
+
+***** There's JUST SO MUCH data
+
+Almost all of this data will never be directly examined by a human.
+There's no shortage of pictures of the sky.  Sure, *most* of those
+pictures do not contain anything very novel...but we're still expecting
+to average one detector-saturating Type 1a Supernova *per night*.  One
+million well-characterized SN1e over the survey life.  Being stingy with
+the data is...pretty self-defeating, given the size of the firehose.
+
+There's a tangential but interesting book about the shift to Big
+Astronomy, [[http://www.hup.harvard.edu/catalog.php?isbn=9780674019966][Giant Telescopes]], and its parallels to the particle physics
+world a few decades earlier.
+
+***** Making your own private copy of the data set is infeasible.
+
+I mean, maybe by 2032 exabyte storage will be in your toothbrush and
+petabit communication speeds will be commonplace.  But I doubt it.
+We're basically planning to transmit 40Gbps all night every night for
+ten years.  That's....a lot.
+
+***** It becomes the analysis that is key, not the data itself
+**** Interactive versus batch
+
+It is our expectation that a researcher would use the interactive
+component of the Science Platform (by which we mean JupyterLab) on a
+relatively tiny subset of the data (maybe a few terabytes in size,
+probably less), and use a relatively miniscule amount of processing
+power, in a rapid-iteration environment, to develop the analysis that
+then would get run in some enormous batch system over a much larger
+subset of data.
+
+That in turn means that we don't have to care very much about speed of
+data access or computation.  Access to completely arbitrary subsets of
+the data, though, is _very_ important.
+
+In that sense the interactive component is treated as a rapid
+prototyping tool.
+
+**** The Next Thing has to not make anyone's life significantly worse
+
+This is where the big sticking point is.  The current system--with a
+large bespoke analysis stack, a great deal of complex configuration and
+installation, and decades of technical debt--is of course not ideal,
+particularly for new users...but it *does* get the job done and whatever
+we come up with has to not be much worse for any of our users.  But we
+have a lot of stakeholders.  To mention a few:
+
+***** Developers of the analysis stack
+
+The stack is big.  Basically no one works on the whole thing.  The
+common paradigm is to take a version of the stack (whether a "release"
+version, approximately every 6 months, or a weekly build) and work on
+your own little corner of it in a conda or pip environment.  We have to
+support that.
+
+***** People concerned with Data Rights
+
+We *do* have to care about who gets to see what, since at least the
+belief in the astronomical community is that the big discoveries will be
+made quickly.  Access is institutional or national rather than
+individual, so it's not as horrible as it could be.
+
+Sidebar: this turns out to be a particularly thorny problem for EPO,
+since they have to balance the requirements that they have adequate data
+to do meaningful educational curricula and enable citizen science, but
+not so much that someone without data rights could scoop a researcher
+with rights to the raw data.
+
+***** Established astronomers
+
+Sure, the kids these days may be all about their fancy-pants Jupyter
+notebooks and their HDF5 data representations but goshdarnit FORTRAN IV
+and FITS were good enough for my grandpappy an' they're good enough for
+me!  GET OFFA MY LAWN!
+
+In practice, what this boils down to is: you need a Terminal window that
+gives you shell access to something that looks like a traditional Unix
+system.  Now, in our case, we mimic, more or less, a system on which you
+have an unprivileged account.  Since the departmental- or
+institutional-scale shared computing environment has been a feature of
+academic science for decades, this will be a familiar model.
+
+As you'll see, it's technically easier to give root-in-a-container to
+someone, but then that opens up the can of worms known as....
+
+***** The security team
+
+We understand how to provision virtual machines and set them up as
+multi-user systems with ACLs and access groups and stuff.  Now you're
+telling me you want an ephemeral container?  That has write access to
+some filesystems?  That probably isn't going to stick around long enough
+to be patched and processed through a Qualys scan?  Are you insane?
+
+If we can make this look very much like an existing multi-user system,
+where users do not have access to mess around with fundamental parts of
+the OS-level software, and where we can demonstrate that we can
+completely characterize what is in a container when we turn it over to
+an unprivileged user, this is a much easier sell.  Sure, you can
+scribble on your own file space...but not everyone's.
+
+** But it could be so much better: a new approach
+
+Imagine a world where:
+
+*** You don't need to spend hours-to-weeks setting up the software environment.
+*** You've got one login to manage all your access to the environment.
+*** All you need is a web browser.  The compute and data storage happen somewhere else.
+*** You don't have to pick a data subset that will fit into your laptop.
+*** Logs and metrics are collected and centralized and presented on an ops dashboard
+
+Here's the big reveal, which should surprise no one who's at this
+conference.  You do this all with:
+
+*** The infrastructure is standard and modular.
+
+You drop in your own science stack and go, or, alternatively, you create
+a science stack next to your own data and go.
+
+*** We are moving towards a new publication paradigm
+
+Notebooks in general offer a magnificent opportunity to move beyond the
+format of the scientific paper, which fundamentally dates back to the
+Scientific Revolution.  By embedding algorithms into the narrative, and
+then by providing the data set you worked on (or, sometimes, for data
+rights reasons, a representative subset), replicability becomes a great
+deal easier.  It also becomes much easier for other researchers to try
+your tools on their data and see whether your approach is generally
+applicable or, for whatever reason, only works well with your data.
+
+*** JupyterHub + JupyterLab + Kubernetes
+
+A high-level overview: this is the architecture for the interactive
+component of the LSST Science Platform, and we strongly believe that it
+should become the model for the right way to do similar sorts of
+projects.  The rest of this talk is going to be about why we think that,
+with some very specific examples of technical choices we made and why we
+made them this way.
+
+*** Why JupyterLab?
+
+We started this in earnest in April of 2017.  JupyterLab seems kind of
+bleeding-edge, especially for a year and a half ago.
+
+Basically it comes down to: the UX is so, so much better than Classic
+Notebook.
+
+The ability to have panes within a single browser tab, with multiple
+documents, or documents plus a Terminal, or whatever, is *huge*.  The
+extension architecture, while not easy to digest, lets us take the
+interface in basically whatever direction we want.
+
+*** JupyterHub doesn't need a lot of explanation
+
+You need some sort of way to do access control and broker allocation of
+Lab resources.  JupyterHub does the trick, and it is configurable enough
+that it can (as you will see) let us do some really nifty things with
+authentication and container spawning.
+
+*** Kubernetes is the way forward
+
+It had become obvious to us by early 2017 that Kubernetes was winning
+the container-orchestration war.  Sure, it's got a steep learning curve,
+but it turns out that GKE was well-built and easy to use.  And once
+Google had it, it was only a matter of time until AWS and Azure followed
+suit, and at that point it became a capability that you can expect any
+cloud provider whatsoever to be able to deliver.  
+
+At which point (crucially for us) it became reasonable for us to specify
+that Kubernetes be the platform supported at our primary data center and
+whatever other data access centers we desire.
+
+The following should not be a surprise to anyone: containerization gives
+us the same advantages that virtualization did a decade ago (50 years
+ago, if you're an old VM/CMS fan like me), one layer higher up the
+software stack, and standardized orchestration on top of that gives us a
+way to describe complex, multicomponent applications.
+
+Virtualization lets you not care about the
+hardware--what CPU flavor do I have, what's the NIC like, that sort of
+thing.  Containerization lets you stop caring about managing the
+OS/distribution layer.  Kubernetes gives you a standardized way to talk
+about container orchestration without caring *how* Docker (or in general
+your containerization solution), its internal network, and that
+network's access to the outside world, is set up.
+
+There's what *I* think is a helpful talk about how containerization
+addresses distribution independence from a few years ago (it only barely
+touches orchestration).  Although I can't really vouch for the author:
+[[https://athornton.github.io/containers-for-curmudgeons][Containers For Curmudgeons]].
+
+So, long bet here: Kubernetes will save astronomy.  It's the first time
+we have had a really functional abstraction layer to allow us to specify
+architectural designs.  We can finally get rid of the world where,
+"well, you need Solaris 10 on SPARC, and Sybase (not Postgres!), and
+Websphere MQ, and..."  Now we really can say: "please give us a k8s
+cluster, with three service accounts.  Default access is fine for one,
+one needs the ability to create, destroy, describe, and list pods, and
+the third needs those plus cluster-wide read operations; if you'd
+prefer, a single admin user which we can use to create those service
+accounts will work for us too."  
+
+Once you have that, then a quite complex multicomponent application can
+run on any such kubernetes cluster.  If you've done it well, you can
+delineate the plumbing from the application, and provide a clear way to
+replace the value-added part (for us, that's the LSST Science Stack in
+the form of a family of JupyterLab containers) with your own piece but
+keep the advantages of a robust infrastructure that scheduled its load
+in a sane fashion across the nodes available to it, and automatically
+managed application component lifecycles for you.
+
+I would be flabbergasted if this weren't portable to other physical
+sciences and very possibly to other analytic problem spaces in general.
+
+** The specific LSST JupyterLab implementation.
+
+*** Overview: how it works
+The diagram in [[https://sqr-018.lsst.io/][SQR-018]] is a good one.  Everything is running in a pod
+controlled by k8s.  We have an automated tool (currently Google-only,
+plus AWS Route 53) to deploy the whole cluster.  This, among other
+things, lets us stand up a cluster for tutorials or meetings very easily
+indeed.
+
+*** Problem 1: Authentication
+
+Authentication is annoying and hard.  So let's not do it.  OAuth2 is a
+thing, and is well-supported in JupyterHub.  So the right way for *our*
+use case is to use an OAuth2 provider, and then extend it if we need to.
+
+We can use either GitHub or CILogon with the NCSA
+ID provider in our current setup (adding other providers or other OAuth2
+sources is straightforward).  Note that this requires a
+publicly-accessible endpoint, with a publicly-verifiable TLS
+certificate, in order to do the OAuth callback.  This isn't a problem.
+Even at NCSA it is not a problem, since we have an external endpoint,
+and JupyterHub is sufficiently flexible to run behind a route in an
+Ingress controller.
+
+But this is way too open.
+
+*** Problem 2: Authorization
+
+The other piece of the puzzle is how to restrict this; obviously not
+*everyone* who has a GitHub account, and not everyone who has an NCSA
+account, should be able to use the LSST JupyterLab implementation.
+
+Enter OAuth2 scopes.
+
+Each of the sources we want to use has some sort of concept of group or
+organization membership.  When we use OAuth we need to get a token with
+sufficient scope to enumerate the groups the user is a part of.  Then we
+can make a go/no-go decision with respect to letting the user in.  For
+instance, a good but crude version would be, "Are you in the GitHub
+organization 'lsst' ?"  Similarly for NCSA--they have an internal group
+representing membership in LSST, so we need to query whether the user
+that just authenticated is in the appropriate group.
+
+Fortunately, there's a very easy way (once you know the trick) to
+implement extended authenticators within jupyterhub_config.py, and also
+an easy way to turn jupyterhub_config.py into something that reads a
+bunch of configuration from a directory.  Those, plus implementing that
+directory as a ConfigMap within kubernetes, gives you a very flexible
+way to create a custom authenticator that can be changed on the fly with
+little fuss.
+
+There's another nifty trick you can do with GitHub.  You're already
+asking for a token.  If you ask for one with write scope, you can then
+create a .git-credentials file at user provisioning time which allows
+authenticated HTTPS pushes with no further configuration required by the
+user.
+
+*** Problem 3: Global user consistency
+
+We're using an external authentication source.  GitHub gives us a number
+that fits into a 32-bit value that is the user account ID.  Each
+organization has one of those as well.  There's a UID/GID map.
+
+We now have similar functionality from the NCSA ID provider in CILogon.
+
+There's functionality within JupyterHub to securely store arbitrary data
+associated with a user record (that is, it is encrypted at rest).  This
+can be used to securely persist the group data, and other extended
+attributes we will see a little later.
+
+If you were using Google you'd need some way to reduce the Google ID to
+32 bits and look for collisions, since in Linux UID is a 32-bit value.
+Probably sequentially assigning them in a dictionary, and persisting
+that inside the JupyterHub User DB, would be your best bet.
+
+*** Problem 4: Restricting user access
+
+I personally don't feel that running containers as root is all that bad,
+if you're not bind-mounting the host filesystem or allowing access to
+the docker socket, but security organizations are generally more
+comfortable if you don't do that.
+
+We have taken a hybrid approach so that we can do user provisioning in
+such a way as to solve our next problem too.
+
+That is, the container starts as root.  We pass a bunch of information
+into the container as environment variables, including a unique
+username/UID combination and a groupname/GID map.  When the container
+starts, there is a process that creates a local user record with the
+appropriate UID and GID set, and then becomes that user *before*
+invoking the JupyterLab server.
+
+It also provisions, if necessary, the persistent home directory,
+which...
+
+*** Problem 5: Persistent Storage
+
+There's a built-in tension here.  A container should be ephemeral, but
+each user must also have some way to do persistent storage in order to
+do work that lasts more than one logon session.  In a perfect world, you
+also want to expose filesystems with the real astronomical data to those
+users that should have rights to them.
+
+Here's something that I think is a fairly brilliant realization we had:
+we now have globally-unique UIDs and GIDs.  So all we really have to do
+is mount a remote filesystem with the same user mapping, and data access
+rights collapse to the long-solved problem of Unix filesystem access
+(or, perhaps, the slightly less-long-solved problem of ACLs).  We're
+currently using NFS v4 inside our k8s cluster, but functionality exists
+to point user homes at a remote NFS server, and it will be trivial to
+add additional mounts for image data, data release products, et cetera.
+
+Why NFS?  Well, mostly, because it's easy.  Since we don't expect this
+to be the system for bulk data transfer (that'd be the batch system) we
+don't care that much about high performance, and so
+GPFS-reexported-as-NFS works well enough for us.  NFS v4 also gives us
+ACL functionality that is a superset of POSIX ACLs and therefore is rich
+enough to support all the use cases we can currently think of.
+
+We expect to revisit this decision over the lifetime of the project.
+However, in order to support e.g. CernVM-FS, we'd need to write a
+Kubernetes storage driver.  By no means impossible, but not effort we
+want to spend right now, when NFS is well-supported and works fine for
+our current needs.
+
+Even if we do very clever object-store stuff behind the curtain, though,
+it's going to look to the user like it's a POSIX filesystem.  Users *get*
+how files work.  No one is surprised by a POSIX filesystem.
+
+*** Problem 6: User Access Restriction
+
+This has basically solved itself: the JupyterLab process is running as
+the user, not as root.  The user is both consistent (in terms of
+UID/GID) with respect to any particular OAuth2 source, and completely
+unprivileged.  It does not have sudo access.  So it can't even mess with
+its own container contents except for the bits of the filesystem it
+owns.
+
+This is handy: you've got access to /tmp and your persistent home
+directory, and pip and conda are both happy to allow users to install
+user-local packages into a home directory.  Since you've got a terminal
+and a home directory, you've got the ability to install whatever
+software you want (admittedly not with the system package management
+tools, but since "the system" is created anew at each logon, it wouldn't
+be a very useful capability anyway).  You could even provide network
+access to it with an ssh port-forwarding tunnel from the container to
+another host you controlled, although the attack surface inside the
+container would still be limited to the damage your unprivileged user
+could do.
+
+This goes a long way to allaying security teams' fears.
+
+*** Problem 7: Auditability and Maintainability
+
+The short answer is: it's a container.  You know what went into it, both
+at the package level (if you are installing particular versions of your
+packages rather than "latest") and at the overlay filesystem layer.
+Thus your builds are repeatable and immutable.
+
+Among our primary use-cases is looking for regressions in the LSST
+software stack.  It turns out that it's not hard at all to build a
+repository scanner that searches a docker repository for an image name
+with a particular tag format.  Do that, decorate options_form with
+@property, and you've got a menu of current stack images that refreshes
+on each login.
+
+This is also behind the question we get fairly often: why is the LSST
+build version done at the container level and chosen from a JupyterHub
+options form?  Other models are easy to imagine: why not have the
+selection in the Jupyter kernel menu?  Either have an even-more-enormous
+container with several stack builds in it, or, more likely, have the
+stack builds on an external fileserver mounted into the user container.
+
+The short answer is that by restricting the stack choice to be a single
+build per container, the software stack you are running is forced to be
+well-characterized.  You are running the nightly from June 21, plus your
+local modifications, and we can tell you exactly what is supposed to be
+in there.  You are not mixing and matching components from across
+builds.  You have only a single container stack and your local
+modifications to it, so you cannot (without working very hard at it) get
+into the situation where most of the stack is June 19, but Sims is April
+10, and Firefly was built on May 26.  This makes troubleshooting a great
+deal easier.
+
+*** Problem 8: Startup time and User Frustration
+Our containers are not normal containers.  To wit: they're on the order
+of 8GB.  Now, they could be slimmed down some, and if we spent a *lot* of
+time on the stack build process, they could probably be slimmed down a
+lot.  Nevertheless, they are fundamentally going to be on the order of
+gigabytes.
+
+Downloading and unpacking (mostly unpacking) these is a slow operation.
+So we have created a pre-puller.  It knows about our tag formats, and
+ensures that the set presented in the options menu is pulled onto each
+node.  So there are a couple hours after a new cluster is brought up
+where startup would be very painful, and there's a window (15 minutes
+for pull, up to an hour for the cron job to trigger) after each nightly
+build where it would be slow, but since that's mostly in the middle of
+night, in general the operational impact is very low.
+
+Data8 does similar things.  Yuvi Panda and Erik Sundell and I have been
+bouncing ideas between our designs for a while now.  This feels like
+something that ought to be in Kubernetes itself.
+*** Some other notes
+
+A lot of this stuff is...well, it's documented but not easily
+discoverable.  Like the @property trick to turn your options form into
+an auto-refresher, or how to write classes in the JupyterHub config that
+are loaded at runtime, or how to break the JupyterHub configuration into
+multiple separate files, allowing reuse between different authentication
+scenarios.  This is where community engagement is a must.
+
+[[https://gitter.im/jupyterlab/jupyterlab][The JupyterLab (and Hub) Gitter]] is extremely helpful.  In general, the
+Jupyter project is a delight to work with.  The core team is very
+friendly and accessible, they're interested in working with you to get
+your PR in a shape they'll accept, they're responsive...it's wonderful.
+I know Open Source software can be a mixed bag in terms of community,
+but the people I've worked with on Jupyter have been great.
+
+[[https://github.com/jupyterhub/zero-to-jupyterhub-k8s/][Zero to JupyterHub]] is a great resource.  For various reasons, most of
+them not very good, that's not the way we went for
+[[https://github.com/lsst-sqre/jupyterlabdemo][the LSST k8s environment]].  Possibly by the time I'm giving this talk we
+will have converted from raw k8s yaml plus jinja2 to helm charts.  It's
+certainly on our roadmap.
+
+Either of those contain all the parts you need for a working deployment,
+with all the bells and whistles, and lots of examples of doing stuff
+like Role-Based Access Control resources and setting up ingress
+proxies.
+
+** Brief live demo if time and decent network
+Preload tabs so I at least have screen shots.
+
+** Questions
