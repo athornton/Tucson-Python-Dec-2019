@@ -227,9 +227,7 @@ Camera
 
 * 189 4K x 4K sensors (roughly 400 4K monitors).
 * 18 bits per pixel.
-* Each exposure 15 seconds.
-* Two exposures per visit (to do cosmic-ray/atmospheric transient
-  rejection, plus a bit of science).
+* Each visit is 30 seconds.  Might be one or two exposures.
 
 .. image:: images/camera.png
   :height: 400px
